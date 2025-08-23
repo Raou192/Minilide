@@ -1,0 +1,8 @@
+pandas
+fpdf
+python-dotenv
+matplotlib
+nicegui
+requests
+beautifulsoup4
+pushbullet.py
