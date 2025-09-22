@@ -19,8 +19,8 @@ REFERENCE_TEMPS = {
     "Capteur 1": (10.0, 30.0),
     "Capteur 2": (-30, -15),
     "Capteur 3": (-30, -15),
-    "Capteur 4": (-110, -90),
-    "Capteur 5": (-110, -90),
+    "Capteur 4": (-25, -15),
+    "Capteur 5": (-25, -15),
     "Capteur 6": (-110, -90),
     "Capteur 7": (-110, -90),
     "Capteur 8": (-110, -90),
@@ -31,15 +31,18 @@ REFERENCE_TEMPS = {
     "Capteur 13": (-110, -90),
     "Capteur 14": (-110, -90),
     "Capteur 15": (-110, -90),
-    "Capteur 16": (-110, -90)
+    "Capteur 16": (-110, -90),
 }
+
+def month_csv_path(dt: datetime) -> str:
+    return os.path.join("data", f"temperatures_{dt.strftime('%m-%Y')}.csv")
 
 try:
     pb = Pushbullet(PUSHBULLET_TOKEN)
 except Exception:
     pb = None
 
-def send_alert(message):
+def send_alert(message: str):
     if pb:
         try:
             pb.push_note("Alerte Température Minilide", message)
@@ -60,8 +63,7 @@ def extract_temperatures():
     soup = BeautifulSoup(response.text, 'html.parser')
     raw_text = soup.get_text()
 
-    # Extraire toutes les températures
-    pattern = r"[-+]?\d{1,3}[.,]\d{1,2}\s*°C"
+    pattern = r"[-+]?\d{1,3}(?:[.,]\d{1,2})?\s*°C"
     matches = re.findall(pattern, raw_text)
 
     values = []
@@ -76,35 +78,56 @@ def extract_temperatures():
         print(" Aucune température détectée dans la page HTML.")
         return
 
+    values = values[:16]
+
     now = datetime.now()
     os.makedirs("data", exist_ok=True)
 
     new_data = []
     alert_messages = []
 
-    for i, temp in enumerate(values):
+    for i in range(16):
         capteur = f"Capteur {i+1}"
+        temp = values[i] if i < len(values) else None
         new_data.append([now, capteur, temp])
 
-        # Vérification avec la plage de température
-        plage = REFERENCE_TEMPS.get(capteur)
-        if plage is not None:
-            min_temp, max_temp = plage
-            if temp < min_temp or temp > max_temp:
-                alert_messages.append(f"{capteur}: {temp}°C (hors plage {min_temp}-{max_temp}°C)")
+        if temp is not None:
+            plage = REFERENCE_TEMPS.get(capteur)
+            if plage is not None:
+                min_temp, max_temp = plage
+                if temp < min_temp or temp > max_temp:
+                    alert_messages.append(
+                        f"{capteur}: {temp}°C (hors plage {min_temp} – {max_temp}°C)"
+                    )
 
     df_new = pd.DataFrame(new_data, columns=["timestamp", "capteur", "temperature"])
 
-    if os.path.exists(CSV_PATH):
-        df_old = pd.read_csv(CSV_PATH)
-        df_combined = pd.concat([df_old, df_new], ignore_index=True)
+    _month_path = month_csv_path(now)
+    exists_month = os.path.exists(_month_path) and os.path.getsize(_month_path) > 0
+
+    if exists_month:
+        try:
+            df_old = pd.read_csv(_month_path)
+            df_combined = pd.concat([df_old, df_new], ignore_index=True)
+        except Exception:
+            df_combined = df_new
     else:
         df_combined = df_new
 
-    df_combined.to_csv(CSV_PATH, index=False)
-    print(f" Températures enregistrées (total fichier : {len(df_combined)} lignes)")
+    df_new.to_csv(
+        _month_path,
+        mode="a" if exists_month else "w",
+        header=not exists_month,
+        index=False,
+    )
 
-    # Envoyer alerte si nécessaire
+    try:
+        pd.read_csv(_month_path).to_csv(CSV_PATH, index=False)
+    except Exception:
+        df_combined.to_csv(CSV_PATH, index=False)
+
+    print(f" Températures enregistrées (total mois : {len(df_combined)} lignes)")
+
     if alert_messages:
         message = "\n".join(alert_messages)
         send_alert(message)
